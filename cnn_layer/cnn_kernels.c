@@ -8,6 +8,7 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+#include "rt/rt_api.h"
 #include "pulp.h"
 #include "cnn_layer.h"
 #include <stdio.h>
@@ -79,6 +80,133 @@ void __attribute__ ((noinline)) CNN_layer_Vector  (Pixel * In_Img, Pixel * Out_I
 
 }
 
+#if DATA_TYPE == 8
+
+void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img, int R, int C, Filtc  * Kernel)
+{
+  FiltcV coeff_0, coeff_1, coeff_2, coeff_3, coeff_4, coeff_5, coeff_6;
+  PixelV Img_0, Img_1, Img_2, Img_3, Img_4, Img_5, Img_6;
+  PixelV new_data1, new_data2;
+  int r, c, i, j, t;
+  PixelV mask0;
+  int S;
+
+  coeff_0 = *((FiltcV *) (&Kernel[ 0]));
+  coeff_1 = *((FiltcV *) (&Kernel[ 5]));
+  coeff_2 = *((FiltcV *) (&Kernel[10]));
+  coeff_3 = *((FiltcV *) (&Kernel[15]));
+  coeff_4 = *((FiltcV *) (&Kernel[20]));
+  coeff_5 = (FiltcV)     { Kernel[4],  Kernel[9], Kernel[14], Kernel[19] };
+  coeff_6 = (FiltcV)     { Kernel[24], 0,         0,          0 };
+  mask0 = (PixelV){1, 2, 3, 4};
+
+  //image board is black
+#ifdef PARALLEL
+  int blockSize = ((C-4)+NUM_CORES-1) / NUM_CORES;
+  int start = rt_core_id()*blockSize;
+  //printf("start = %d, condition = %d\n", start, (c < C-4) && (c < start+blockSize));
+  for (c=start; (c < C-4) && (c < start+blockSize); c++) {
+#else
+  for (c=0; c < C-4; c++) {
+#endif
+
+    Img_0   = *((PixelV *) (&In_Img[c])     );
+    Img_1   = *((PixelV *) (&In_Img[c+R])   );
+    Img_2   = *((PixelV *) (&In_Img[c+2*R]) );
+    Img_3   = *((PixelV *) (&In_Img[c+3*R]) );
+    Img_4   = *((PixelV *) (&In_Img[c+4*R]) );
+    Img_5   = (PixelV)     { In_Img[c+4],     In_Img[c+4+R], In_Img[c+4+2*R], In_Img[c+4+3*R] };
+    Img_6   = (PixelV)     { In_Img[c+4+4*R], 0,             0,               0 };
+
+    for (r=1; r < R-4; r++) {
+
+        t = (r+1)*R + c+2;
+        S = dotp(Img_0,coeff_0);
+        S = sumdotp(Img_1,coeff_1, S);
+        S = sumdotp(Img_2,coeff_2, S);
+        S = sumdotp(Img_3,coeff_3, S);
+        S = sumdotp(Img_4,coeff_4, S);
+        S = sumdotp(Img_5,coeff_5, S);
+        S = sumdotp(Img_6,coeff_6, S);
+
+        // Rounding and Normalization: Data are Q2.2*(DATA_WIDTH-1), now Q2.DATA_WIDTH-1
+        S = addnr(S,DATA_WIDTH-1,ROUNDBIT);
+        // Saturation
+        S = clipu(S,0,SATURATION);
+
+        Out_Img[t] = (Pixel)S;
+
+        new_data1 = *((PixelV *) (&In_Img[c+(r+4)*R]));
+        new_data2 =   (PixelV  ) {In_Img[c+4+(r+4)*R], 0, 0, 0};
+
+        // Move the window
+        /*
+          Seven vectors:
+
+          Img_0 = {A0, A1, A2, A3}
+          Img_1 = {B0, B1, B2, B3}
+          Img_2 = {C0, C1, C2, C3}
+          Img_3 = {D0, D1, D2, D3}
+          Img_4 = {E0, E1, E2, E3}
+          Img_5 = {F0, F1, F2, F3}
+          Img_6 = {G0,  0,  0,  0}
+
+          Current Windonw:
+          XX XX XX XX XX
+          A0 A1 A2 A3 F0
+          B0 B1 B2 B3 F1
+          C0 C1 C2 C3 F2
+          D0 D1 D2 D3 F3
+          E0 E1 E2 E3 G0
+          H0 H1 H2 H3 G1
+          XX XX XX XX XX
+
+          We want to load next line (H0, H1, H2, H3, G1)
+          in vectors new_data1 and new_data2
+          new_data1 = {H0, H1, H2, H3}
+          new_data2 = {G1,  0,  0,  0}
+
+          Move each vector one line down and shuffle the vertical vector
+
+          Img_0 = {B0, B1, B2, B3}
+          Img_1 = {C0, C1, C2, C3}
+          Img_2 = {D0, D1, D2, D3}
+          Img_3 = {E0, E1, E2, E3}
+          Img_4 = {H0, H1, H2, H3}
+          Img_5 = {F1, F2, F3, G0}
+          Img_5 = {G1,  0,  0,  0}
+        */
+
+        Img_0 = Img_1;
+        Img_1 = Img_2;
+        Img_2 = Img_3;
+        Img_3 = Img_4;
+        Img_4 = new_data1;
+        Img_5 = shuffle(Img_5, Img_6,  mask0);
+        Img_6 = new_data2;
+
+    }
+    //last iteration
+    t = (r+1)*R + c+2;
+    S = dotp(Img_0,coeff_0);
+    S = sumdotp(Img_1,coeff_1, S);
+    S = sumdotp(Img_2,coeff_2, S);
+    S = sumdotp(Img_3,coeff_3, S);
+    S = sumdotp(Img_4,coeff_4, S);
+    S = sumdotp(Img_5,coeff_5, S);
+    S = sumdotp(Img_6,coeff_6, S);
+
+    // Rounding and Normalization: Data are Q2.2*(DATA_WIDTH-1), now Q2.DATA_WIDTH-1
+    S = addnr(S,DATA_WIDTH-1,ROUNDBIT);
+    // Saturation
+    S = clipu(S,0,SATURATION);
+
+    Out_Img[t] = (Pixel)S;
+  }
+}
+
+#else
+
 void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img, int R, int C, Filtc  * Kernel)
 {
   FiltcV coeff_0, coeff_1, coeff_2, coeff_3, coeff_4, coeff_5, coeff_6, coeff_7, coeff_8, coeff_9, coeff_10, coeff_11, coeff_12;
@@ -105,7 +233,14 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
   mask0 = (PixelV){1, 2};
 
   //image board is black
+#ifdef PARALLEL
+  int blockSize = ((C-4)+NUM_CORES-1) / NUM_CORES;
+  int start = rt_core_id()*blockSize;
+  //printf("start = %d, condition = %d\n", start, (start < C-4) && (start < start+blockSize));
+  for (c=start; (c < C-4) && (c < start+blockSize); c++) {
+#else
   for (c=0; c < C-4; c++) {
+#endif
 
     Img_0   = *((PixelV *) (&In_Img[c])      );
     Img_1   = *((PixelV *) (&In_Img[c+2])    );
@@ -123,7 +258,7 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
 
     for (r=1; r < R-4; r++) {
 
-        t = (r-1)*(R-4) + c;
+        t = (r+1)*R + c+2;
         S = dotp(Img_0,coeff_0);
         S = sumdotp(Img_1,  coeff_1, S);
         S = sumdotp(Img_2,  coeff_2, S);
@@ -140,10 +275,11 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
 
         // Rounding and Normalization: Data are Q2.2*(DATA_WIDTH-1), now Q2.DATA_WIDTH-1
         S = addnr(S,DATA_WIDTH-1,ROUNDBIT);
-        // Non linearity
-        S = S > 0 ? S : 0;
+        // Saturation
+        S = clipu(S,0,SATURATION);
 
         Out_Img[t] = (Pixel)S;
+
 
         new_data1 = *((PixelV *) (&In_Img[c+(r+4)*R]));
         new_data2 = *((PixelV *) (&In_Img[c+2+(r+4)*R]));
@@ -216,7 +352,7 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
 
     }
     //last iteration
-    t = (r-1)*(R-4) + c;
+    t = (r+1)*R + c+2;
     S = dotp(Img_0,coeff_0);
     S = sumdotp(Img_1,  coeff_1, S);
     S = sumdotp(Img_2,  coeff_2, S);
@@ -230,16 +366,19 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
     S = sumdotp(Img_10,coeff_10, S);
     S = sumdotp(Img_11,coeff_11, S);
     S = sumdotp(Img_12,coeff_12, S);
+
     // Rounding and Normalization: Data are Q2.2*(DATA_WIDTH-1), now Q2.DATA_WIDTH-1
     S = addnr(S,DATA_WIDTH-1,ROUNDBIT);
-    // Non linearity
-    S = S > 0 ? S : 0;
+    // Saturation
+    S = clipu(S,0,SATURATION);
 
     Out_Img[t] = (Pixel)S;
-
   }
 }
 #endif
+
+#endif
+
 void __attribute__ ((noinline)) Pool2x2 (Pixel * In_Img, Pixel * Out_Img, int R, int C)
 {
   int r, c, t0, t1,k0, k1, r0, r1, c0, c1, i;

@@ -9,6 +9,7 @@
 // specific language governing permissions and limitations under the License.
 
 #include "convolution.h"
+#include "rt/rt_api.h"
 #include <stdio.h>
 
 #define ROUNDBIT   (1 << (DATA_WIDTH -1 -1))
@@ -156,7 +157,7 @@ void __attribute__ ((noinline)) Conv3x3_Vector  (Pixel * In_Img, Pixel * Out_Img
           XX XX XX
 
           We want to load next line (D0, D1, D2) in vector new_data
-          new_data = {D0, D1, D2, 0} 
+          new_data = {D0, D1, D2, 0}
 
           Move each vector one line down
 
@@ -206,7 +207,14 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
   mask0 = (PixelV){1, 2, 3, 4};
 
   //image board is black
+#ifdef PARALLEL
+  int blockSize = ((C-4)+NUM_CORES-1) / NUM_CORES;
+  int start = rt_core_id()*blockSize;
+  //printf("start = %d, condition = %d\n", start, (c < C-4) && (c < start+blockSize));
+  for (c=start; (c < C-4) && (c < start+blockSize); c++) {
+#else
   for (c=0; c < C-4; c++) {
+#endif
 
     Img_0   = *((PixelV *) (&In_Img[c])     );
     Img_1   = *((PixelV *) (&In_Img[c+R])   );
@@ -436,7 +444,14 @@ void __attribute__ ((noinline)) Conv5x5_Vector  (Pixel * In_Img, Pixel * Out_Img
   mask0 = (PixelV){1, 2};
 
   //image board is black
+#ifdef PARALLEL
+  int blockSize = ((C-4)+NUM_CORES-1) / NUM_CORES;
+  int start = rt_core_id()*blockSize;
+  //printf("start = %d, condition = %d\n", start, (start < C-4) && (start < start+blockSize));
+  for (c=start; (c < C-4) && (c < start+blockSize); c++) {
+#else
   for (c=0; c < C-4; c++) {
+#endif
 
     Img_0   = *((PixelV *) (&In_Img[c])      );
     Img_1   = *((PixelV *) (&In_Img[c+2])    );

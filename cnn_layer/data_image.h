@@ -1,7 +1,13 @@
 #ifndef _INPUT_IMAGE_
 #define _INPUT_IMAGE_
 
-static Pixel In_Img[256] = {
+#ifdef FABRIC
+#define DATA_LOCATION
+#else
+#define DATA_LOCATION __attribute__((section(".data_l1")))
+#endif
+
+DATA_LOCATION static Pixel In_Img[256] = {
 6674, 3455, 2269, 5811, 7298, 2881, 4660, 1876, 2129, 3292, 6392, 5318, 3988, 5099, 7413, 701, \
 7420, 7502, 378, 6182, 7859, 6806, 3845, 7482, 6554, 622, 3193, 5994, 3571, 4809, 8026, 2150, \
 1040, 6490, 796, 2261, 4483, 4794, 98, 1248, 3534, 1965, 1980, 5306, 3660, 1702, 3595, 6562, \
@@ -20,7 +26,7 @@ static Pixel In_Img[256] = {
 1162, 261, 5295, 5727, 3877, 1064, 687, 3275, 4205, 911, 1384, 6355, 4507, 1514, 4160, 5112, \
 };
 
-static Filtc Filter_Kern[25] = {
+DATA_LOCATION static Filtc Filter_Kern[25] = {
 683, 1365, 0, -1365, -683, \
 2731, 5461, 0, -5461, -2731, \
 4096, 8191, 0, -8192, -4096, \
